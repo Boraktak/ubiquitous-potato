@@ -130,8 +130,21 @@ def _sdpa_mask(
     causal: bool,
 ) -> Tuple[Optional[torch.Tensor], bool]:
     if attn_mask is not None and key_padding_mask is None and attn_mask.dim() == 2:
+        # A rank-2 mask shaped like (batch, seq) is ambiguous, and the two
+        # readings are exact opposites: an attention mask keeps where it is True,
+        # a per-row padding mask drops where it is True. Guessing here used to
+        # reroute the tensor to the padding channel without inverting it, so
+        # `torch.ones(batch, seq)` -- "attend to everything" -- masked everything
+        # instead, silently. The square (S, S) causal mask hit the same branch
+        # whenever batch == seq_len. Refuse to guess; make the caller be explicit.
         if attn_mask.shape in {(batch, q_len), (batch, kv_len)}:
-            key_padding_mask, attn_mask = attn_mask, None
+            raise ValueError(
+                f"ambiguous rank-2 attn_mask with shape {tuple(attn_mask.shape)} "
+                f"(batch={batch}, q_len={q_len}, kv_len={kv_len}): it matches both a "
+                f"per-row mask and a (q_len, kv_len) attention mask, which use opposite "
+                f"conventions. Pass key_padding_mask=<mask> if True marks padding, or "
+                f"expand to (batch, 1, q_len, kv_len) if True marks keys to attend to."
+            )
     if causal and cache_len == 0 and attn_mask is None and key_padding_mask is None:
         return None, True
     if (not causal) and attn_mask is None and key_padding_mask is None:
