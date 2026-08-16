@@ -2,15 +2,19 @@
 
 `_sdpa_mask` funnels four different user-facing mask spellings into one additive
 SDPA mask, and the normalisation has sharp edges that are easy to trip over.
-These tests pin the **current behaviour** down so it cannot drift silently.
+These tests pin the normalisation rules down so they cannot drift silently.
 
-Two of them document genuine traps rather than desirable behaviour; they are
-marked in the docstrings and mirrored in the "Mask semantics" section of the
-README. They are written so that changing the behaviour on purpose fails the
-test loudly (and the fix is then a one-line edit here plus a README update),
-rather than the behaviour changing under a suite that never noticed.
+Rank-2 masks are the sharp edge. A `(batch, seq)`-shaped mask matches both a
+per-row mask and a `(q_len, kv_len)` attention mask, and the two readings are
+exact opposites -- an attention mask *keeps* where it is True, a padding mask
+*drops* where it is True. `_sdpa_mask` used to guess, rerouting such a tensor to
+the padding channel without inverting it, so `torch.ones(batch, seq)` ("attend
+to everything") masked everything, and the ordinary square `(S, S)` causal mask
+broke whenever `batch == seq_len`. Both failed silently: no exception, no NaN,
+just different logits.
 
-Nothing here modifies `dialectic.py`.
+That guess is now a loud `ValueError`. The tests below cover the rejection, the
+two documented ways to be explicit, and the unambiguous shapes that still work.
 """
 
 import pytest
@@ -56,66 +60,85 @@ def test_single_token_decode_with_cache_needs_no_mask():
     assert is_causal is False, "is_causal would wrongly re-apply a triangle to a 1-row query"
 
 
-def test_rank_two_batch_shaped_mask_is_reinterpreted_as_padding():
-    """TRAP: a `(B, S)` `attn_mask` is silently re-read as a `key_padding_mask`.
-
-    `attn_mask` is keep-semantics (True = attend) while `key_padding_mask` is
-    drop-semantics (True = padding). The re-read does **not** invert the tensor,
-    so a `(B, S)` mask means the exact opposite of what its name implies.
-    """
-    m = torch.tensor([[True, True, False, False], [True, False, False, False]])
-    as_attn, _ = sdpa_mask(attn_mask=m)
-    as_padding, _ = sdpa_mask(key_padding_mask=m)
-    assert torch.equal(as_attn, as_padding), "the (B, S) form is routed to the padding channel"
-    # Read at query 3, which the causal triangle lets see every key: the two
-    # True entries became -inf, i.e. "keep" was applied as "drop".
-    assert as_attn[0, 0, 3, 0] == float("-inf"), "True was dropped, not kept"
-    assert as_attn[0, 0, 3, 1] == float("-inf")
-    assert as_attn[0, 0, 3, 2] == 0.0, "False was kept, not dropped"
+@pytest.mark.parametrize("shape", [(2, 4), (2, 6)], ids=["matches_q_len", "matches_kv_len"])
+def test_ambiguous_rank_two_mask_is_rejected(shape):
+    """A `(batch, seq)`-shaped `attn_mask` must be refused, not guessed at."""
+    m = torch.ones(shape, dtype=torch.bool)
+    with pytest.raises(ValueError, match="ambiguous rank-2 attn_mask") as excinfo:
+        sdpa_mask(attn_mask=m, q_len=4, kv_len=6, cache_len=2, batch=2)
+    message = str(excinfo.value)
+    assert "key_padding_mask" in message, "the error must name the padding remedy"
+    assert "(batch, 1, q_len, kv_len)" in message, "and the attention-mask remedy"
 
 
-def test_rank_two_keep_mask_flips_meaning_at_model_level(small):
-    """TRAP, observable end to end: "attend to everything" silently masks everything.
+def test_unambiguous_rank_two_mask_is_still_accepted():
+    """A `(q_len, kv_len)` mask that cannot be confused with a row mask still works."""
+    keep = torch.tril(torch.ones(4, 4, dtype=torch.bool))
+    mask, is_causal = sdpa_mask(attn_mask=keep, q_len=4, kv_len=4, batch=2)
+    assert is_causal is False
+    assert mask[3, 0] == 0.0, "True keeps the key"
+    assert mask[0, 3] == float("-inf"), "False drops it"
 
-    No exception and no NaN — just quietly different logits, which is the worst
-    possible failure mode. Pass a 3-D/4-D mask (or `key_padding_mask`) instead.
-    """
+
+def test_rank_two_keep_mask_is_rejected_at_model_level(small):
+    """End to end: "attend to everything" must raise instead of masking everything."""
     torch.manual_seed(1)
     ids = torch.randint(0, 100, (2, 16))
     keep_all = torch.ones(2, 16, dtype=torch.bool)  # "attend to every key"
+    with pytest.raises(ValueError, match="ambiguous rank-2 attn_mask"):
+        small(ids, episode_reset=True, attn_mask=keep_all)
+
+
+def test_documented_remedies_for_a_rank_two_keep_mask(small):
+    """Both escapes named in the error message must give the intended result."""
+    torch.manual_seed(1)
+    ids = torch.randint(0, 100, (2, 16))
+    keep_all = torch.ones(2, 16, dtype=torch.bool)
     with torch.no_grad():
         base, _, _, _, _ = small(ids, episode_reset=True)
-        out, _, _, _, _ = small(ids, episode_reset=True, attn_mask=keep_all)
-    assert not close(base, out), "an all-keep mask is not a no-op here"
-    assert bool(torch.isfinite(out).all().item()), "it fails silently rather than loudly"
+        as_rank4, _, _, _, _ = small(
+            ids, episode_reset=True, attn_mask=keep_all[:, None, None, :].expand(2, 1, 16, 16)
+        )
+        as_padding, _, _, _, _ = small(
+            ids, episode_reset=True, key_padding_mask=~keep_all  # keep -> padding is an inversion
+        )
+    assert close(base, as_rank4), "keeping every key is a no-op on top of causal"
+    assert close(base, as_padding), "and so is declaring nothing to be padding"
 
 
-def test_square_mask_is_reinterpreted_when_batch_equals_seq_len(small):
-    """TRAP: the ordinary `(S, S)` causal mask breaks when `batch == seq_len`.
+def test_square_causal_mask_is_rejected_only_when_batch_equals_seq_len(small):
+    """The `(S, S)` causal mask works, except where its shape becomes ambiguous.
 
-    `(S, S)` then also matches `(batch, q_len)`, and the padding branch wins.
-    The same mask on the same model is correct at one batch size and wrong at
-    another, which makes this exceptionally easy to miss.
+    At `batch == seq_len` it also matches `(batch, q_len)`; that used to be read
+    as padding, so the same mask was correct at one batch size and wrong at
+    another. Now it raises, and rank-4 remains available.
     """
-    def run(batch, seq):
+    def setup(batch, seq):
         torch.manual_seed(2)
         ids = torch.randint(0, 100, (batch, seq))
-        tri = torch.tril(torch.ones(seq, seq, dtype=torch.bool))
-        with torch.no_grad():
-            base, _, _, _, _ = small(ids, episode_reset=True)
-            out, _, _, _, _ = small(ids, episode_reset=True, attn_mask=tri)
-        return close(base, out)
+        return ids, torch.tril(torch.ones(seq, seq, dtype=torch.bool))
 
-    assert run(2, 16), "batch != seq_len: the square mask is read as an attention mask"
-    assert not run(4, 4), "batch == seq_len: the same mask is read as padding"
+    ids, tri = setup(2, 16)
+    with torch.no_grad():
+        base, _, _, _, _ = small(ids, episode_reset=True)
+        out, _, _, _, _ = small(ids, episode_reset=True, attn_mask=tri)
+    assert close(base, out), "batch != seq_len stays unambiguous and must keep working"
+
+    ids, tri = setup(4, 4)
+    with pytest.raises(ValueError, match="ambiguous rank-2 attn_mask"):
+        small(ids, episode_reset=True, attn_mask=tri)
+    with torch.no_grad():
+        base, _, _, _, _ = small(ids, episode_reset=True)
+        out, _, _, _, _ = small(ids, episode_reset=True, attn_mask=tri.expand(4, 1, 4, 4))
+    assert close(base, out), "the rank-4 spelling is unambiguous and still allowed"
 
 
 def test_rank_two_mask_keeps_its_meaning_when_a_padding_mask_is_present(small):
-    """The re-read only fires when `key_padding_mask` is None.
+    """The ambiguity check only fires when `key_padding_mask` is None.
 
-    Supply both and the `(B, KV)` mask stays keep-semantics, broadcast over
-    queries — so the very same tensor means opposite things depending on
-    whether a padding mask travels with it.
+    Supplying a padding mask already answers the question the check asks, so a
+    `(B, KV)` `attn_mask` alongside it is unambiguously keep-semantics,
+    broadcast over queries.
     """
     torch.manual_seed(3)
     ids = torch.randint(0, 100, (2, 16))
