@@ -1,0 +1,5 @@
+# Development / CI dependencies.
+# Installing this file also pulls in the runtime deps from requirements.txt.
+-r requirements.txt
+
+pytest>=8.0
