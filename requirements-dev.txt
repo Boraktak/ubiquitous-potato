@@ -1,0 +1,5 @@
+# CPU-only wheels keep CI fast; CUDA is not needed for the test suite.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch>=2.2
+pytest>=8.0
