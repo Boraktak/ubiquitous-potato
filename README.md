@@ -195,6 +195,52 @@ Padded tokens are masked out of attention, excluded from the SSM accumulation,
 and blocked from writing episodic slots — per row, so one short row in a batch
 never contaminates its neighbours.
 
+### Mask semantics — read this before passing `attn_mask`
+
+`attn_mask` is normalised by shape, and rank-2 masks are ambiguous. How a mask
+is read depends on its shape *and* on whether a `key_padding_mask` travels with
+it:
+
+| `attn_mask` shape | Read as | `True` means |
+|---|---|---|
+| `(Q, KV)`, and `batch != Q` | attention mask | **keep** |
+| `(Q, KV)`, and `batch == Q` | ⚠️ padding mask | **drop** |
+| `(B, S)`, no `key_padding_mask` | ⚠️ padding mask | **drop** |
+| `(B, KV)`, with a `key_padding_mask` | attention mask, broadcast over queries | **keep** |
+| `(B, Q, KV)` | attention mask | **keep** |
+| `(B, H, Q, KV)` | attention mask | **keep** |
+| float, any rank | additive (`-inf` drops) | — |
+| `key_padding_mask` `(B, S)` | padding mask; also drives the SSM validity mask | **drop** |
+
+The two ⚠️ rows are traps, and they fail *silently* — no exception, no NaN,
+just quietly different logits:
+
+```python
+import torch
+from dialectic import DialecticTransformer
+
+torch.manual_seed(0)
+model = DialecticTransformer(vocab_size=100, d_model=64, num_layers=2,
+                             num_heads=4, state_dim=32, chunk_size=8, mem_slots=4)
+model.eval()
+ids = torch.randint(0, 100, (4, 4))                  # note: batch == seq_len
+tri = torch.tril(torch.ones(4, 4, dtype=torch.bool))
+
+with torch.no_grad():
+    plain, _, _, _, _ = model(ids, episode_reset=True)
+    trap, _, _, _, _ = model(ids, episode_reset=True, attn_mask=tri)
+    safe, _, _, _, _ = model(ids, episode_reset=True,
+                             attn_mask=tri.expand(4, 1, 4, 4))   # rank-4 is unambiguous
+
+print(torch.allclose(plain, trap, atol=1e-5))   # False -> (4,4) was read as padding
+print(torch.allclose(plain, safe, atol=1e-5))   # True
+```
+
+**Rule of thumb: always give `attn_mask` as rank-3 `(B, Q, KV)` or rank-4
+`(B, H, Q, KV)`, and express padding with `key_padding_mask`.** Rank-4 is never
+ambiguous. These rules are pinned by `tests/test_mask_semantics.py`, so if the
+normalisation ever changes, that file is where you will hear about it.
+
 ---
 
 ## Chunk-invariance: full model needs `use_cache=True`
@@ -275,7 +321,7 @@ So: **carry `caches` alongside `states` whenever you split a sequence.**
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q          # 62 tests
+pytest -q          # 70 tests
 python dialectic.py    # the end-to-end demo, prints "Hasil akhir: SEMUA OK"
 ```
 
@@ -288,12 +334,17 @@ Everything runs on CPU with fixed seeds, so the suite is deterministic in CI.
 | `tests/test_episodic_memory.py` | 5 | read/write ablations proving memory changes the output, empty-buffer readout, detached writes, `Mem/*` metrics |
 | `tests/test_generation.py` | 7 | greedy vs argmax, `top_k=1` ≡ greedy, seeded sampling, vocab bounds, `top_k` clamping, train-mode restore, no grad graph |
 | `tests/test_gradients.py` | 9 | finite loss and non-zero grads on every trainable path, no KV cache while training, second backward after a state carry |
+| `tests/test_mask_semantics.py` | 8 | how `_sdpa_mask` normalises every mask spelling, including two shape ambiguities that fail silently |
 | `tests/test_masking_and_state.py` | 8 | 2-D bool/float masks, RoPE offset behaviour, `pos` bookkeeping, `episode_reset`, non-causal mode, dropout train/eval |
 | `tests/test_mixed_phase.py` | 6 | `ChunkwiseSSM._run_mixed`: dispatch on ragged phases, and the contract that a mixed-phase batch equals the rows run separately |
 | `tests/test_padding_paths.py` | 8 | 3-D and 4-D attention masks, fully padded chunks, and per-row episodic write masks |
 | `tests/test_validation.py` | 9 | constructor and argument validation raising early and loudly |
 
-Two of those files are worth a note on *why* they are shaped the way they are.
+Together these cover **every line of the model code**; the only lines pytest
+does not reach are `run_demo()` and its print helpers, which CI executes
+separately via `python dialectic.py`.
+
+Three of those files are worth a note on *why* they are shaped the way they are.
 
 **`test_mixed_phase.py`** targets `_run_mixed`, the slow path used when rows of a
 batch sit at different chunk phases — what continuous batching produces when
@@ -309,6 +360,13 @@ frozen fast path and no write happens regardless of the mask — so a uniform
 batch would still pass even if the per-row write mask had been collapsed into a
 single batch-wide flag. Only a mixed batch distinguishes "write for the rows
 that carry real tokens" from "write for everyone".
+
+**`test_mask_semantics.py`** is a *characterization* suite: it pins down what
+`_sdpa_mask` currently does with each mask spelling, including the two silent
+traps in the table above. Those two tests assert the trap, not the ideal — they
+exist so the behaviour cannot drift unnoticed and so the surprise is documented
+somewhere executable. Changing the normalisation on purpose should fail them
+loudly; update the test and the table above together.
 
 ---
 
