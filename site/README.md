@@ -46,6 +46,70 @@ data disimpan di `localStorage` perangkat.
 - Pencarian, progress baca, toast notifikasi, aksesibilitas
   (`prefers-reduced-motion`, fokus keyboard, escape untuk menutup sheet)
 
+## Deploy ke GitHub Pages (web publik)
+
+Catatan penting: Pages bersifat **statis**, jadi cerita hanya tersimpan di
+`localStorage` per browser (badge **Offline** akan tampil — itu normal).
+Untuk penyimpanan multi-perangkat tetap pakai `python3 server.py`.
+
+Langkah satu kali untuk mengaktifkan (butuh akses **admin** repo):
+
+1. Buat file `.github/workflows/deploy-pages.yml` di repo (isi lihat di bawah).
+2. Buka **Settings → Pages**, pada *Build and deployment* pilih
+   **Source: GitHub Actions**.
+3. Setelah itu workflow berjalan otomatis tiap push ke `main` (atau manual
+   lewat tab **Actions → Run workflow**).
+4. URL situs: `https://boraktak.github.io/ubiquitous-potato/`
+
+Isi `.github/workflows/deploy-pages.yml`:
+
+```yaml
+name: Deploy Cerita site to GitHub Pages
+
+on:
+  push:
+    branches: ["main", "arena/01a00d61-ubiquitous-potato"]
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Build site (copy site/ to _site)
+        run: |
+          mkdir -p _site
+          cp -r site/. _site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+> Mengapa langkah di atas manual? Token bot yang dipakai Arena tidak punya
+> izin `admin` (untuk mengaktifkan Pages) maupun `workflows` (untuk mengunggah
+> file workflow), jadi dua langkah di atas dilakukan oleh pemilik repo. Setelah
+> Pages aktif, deploy otomatis.
+
 ## Memisahkan dari repo induk
 
 Jika ingin memindahkan situs ini ke repository sendiri (mis. `cerita`):
