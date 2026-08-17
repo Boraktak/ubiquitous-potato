@@ -18,6 +18,22 @@ of each to trust per token and per channel.
 
 ---
 
+## Repository layout — two independent parts
+
+This repository holds two unrelated projects side by side:
+
+| Path | What it is |
+|---|---|
+| `dialectic.py`, `tests/`, `requirements*.txt`, `pytest.ini`, `.github/workflows/ci.yml` | the **DialecticTransformer** ML project (this README's subject) |
+| `site/` | the **Cerita** web app — a self-contained iOS-style story reader (HTML/CSS/JS + a tiny stdlib-only Python server). See `site/README.md` for how to run it. |
+
+The two parts don't depend on each other: the ML suite is pinned to
+`testpaths = tests`, so CI never touches `site/`, and the site ships no
+Python package dependencies. To split them into separate repositories later,
+the site can be moved as-is (`git subtree split --prefix=site`).
+
+---
+
 ## Architecture
 
 ```
@@ -386,4 +402,5 @@ documented escapes, and the unambiguous shapes that still work.
 | `dialectic.py` | the whole model plus `run_demo()`, which CI runs end to end |
 | `tests/` | the pytest suite described above |
 | `HASIL_TEST.md` | the original test report (in Indonesian), including the chunk-invariance investigation |
+| `site/` | the separate **Cerita** story web app (see its own `site/README.md`) |
 | `.github/workflows/ci.yml` | pytest on Python 3.10 / 3.11 / 3.12 plus the demo script |
