@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#F2F2F7" />
+  <title>Cerita — Baca &amp; Tulis</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%23007AFF'/%3E%3Ctext x='50' y='68' font-size='58' text-anchor='middle' fill='white' font-family='-apple-system,sans-serif' font-weight='700'%3EA%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <div class="app">
+    <!-- ===================== HEADER ===================== -->
+    <header class="header">
+      <div class="header-row">
+        <h1 class="large-title">Cerita</h1>
+        <div class="header-actions">
+          <span class="sync-pill" id="syncPill" hidden>
+            <span class="sync-dot"></span><span>Offline</span>
+          </span>
+          <button class="icon-button" id="addButtonTop" aria-label="Tulis cerita baru" title="Cerita baru">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- iOS-style theme switch -->
+      <div class="theme-control">
+        <svg class="theme-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+        <label class="switch">
+          <input type="checkbox" id="themeSwitch" aria-label="Mode terang / gelap" />
+          <span class="switch-track"></span>
+        </label>
+        <svg class="theme-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </div>
+
+      <div class="search-bar">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="search" id="searchInput" placeholder="Cari judul, penulis, kategori…" autocomplete="off" />
+        <button class="search-clear" id="searchClear" aria-label="Hapus pencarian" hidden>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 10.586l4.95-4.95 1.414 1.414-4.95 4.95 4.95 4.95-1.414 1.414-4.95-4.95-4.95 4.95-1.414-1.414 4.95-4.95-4.95-4.95L7.05 5.636z"/></svg>
+        </button>
+      </div>
+
+      <div class="segmented" role="tablist" aria-label="Filter cerita">
+        <button class="segment is-active" data-filter="semua" role="tab" aria-selected="true">Semua</button>
+        <button class="segment" data-filter="terbaru" role="tab" aria-selected="false">Terbaru</button>
+        <button class="segment" data-filter="populer" role="tab" aria-selected="false">Populer</button>
+        <button class="segment" data-filter="favorit" role="tab" aria-selected="false">Favorit</button>
+      </div>
+    </header>
+
+    <!-- ===================== STORY LIST ===================== -->
+    <div class="list-meta" id="listMeta" hidden></div>
+    <main class="story-list" id="storyList" aria-live="polite"></main>
+
+    <!-- Empty state -->
+    <div class="empty-state" id="emptyState" hidden>
+      <div class="empty-icon">
+        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+      </div>
+      <h2 class="empty-title">Belum ada cerita</h2>
+      <p class="empty-text">Mulai dengan menulis cerita pertamamu.</p>
+      <button class="primary-button" id="emptyAddButton">Tulis Cerita</button>
+    </div>
+  </div>
+
+  <!-- ===================== SCRIM ===================== -->
+  <div class="scrim" id="scrim" hidden></div>
+
+  <!-- ===================== READ SHEET ===================== -->
+  <section class="sheet sheet--read" id="readSheet" role="dialog" aria-modal="true" aria-labelledby="readTitle" hidden>
+    <div class="sheet-grabber"></div>
+    <div class="read-progress"><div class="read-progress-bar" id="readProgressBar"></div></div>
+    <div class="sheet-scroll" id="readScroll">
+      <div class="read-cover" id="readCover"></div>
+      <div class="read-body">
+        <span class="pill" id="readCategory"></span>
+        <h2 class="read-title" id="readTitle"></h2>
+        <div class="read-meta">
+          <span id="readAuthor"></span>
+          <span class="dot">·</span>
+          <span id="readDate"></span>
+          <span class="dot">·</span>
+          <span id="readTime"></span>
+          <span class="dot">·</span>
+          <span id="readViews"></span>
+        </div>
+
+        <div class="action-row">
+          <button class="action-button" id="shareButton" aria-label="Bagikan cerita">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+            </span>
+            <span class="action-label">Bagikan</span>
+          </button>
+          <button class="action-button" id="favoriteButton" aria-label="Sukai cerita">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            </span>
+            <span class="action-label" id="favoriteLabel">Suka</span>
+          </button>
+          <button class="action-button" id="editButton" aria-label="Edit cerita">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+            </span>
+            <span class="action-label">Edit</span>
+          </button>
+          <button class="action-button action-button--danger" id="deleteButton" aria-label="Hapus cerita">
+            <span class="action-icon">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </span>
+            <span class="action-label">Hapus</span>
+          </button>
+        </div>
+
+        <div class="read-text" id="readText"></div>
+      </div>
+    </div>
+    <div class="sheet-footer">
+      <button class="footer-button footer-button--close" id="closeReadButton">Tutup</button>
+    </div>
+  </section>
+
+  <!-- ===================== ADD / EDIT SHEET ===================== -->
+  <section class="sheet sheet--add" id="addSheet" role="dialog" aria-modal="true" aria-labelledby="addSheetTitle" hidden>
+    <div class="sheet-grabber"></div>
+    <div class="sheet-scroll">
+      <div class="add-head">
+        <button class="text-button" id="cancelButton">Batal</button>
+        <h2 class="add-title" id="addSheetTitle">Tulis Cerita</h2>
+        <button class="text-button text-button--accent" id="saveButton">Simpan</button>
+      </div>
+
+      <form id="storyForm" novalidate>
+        <label class="field">
+          <span class="field-label">Judul</span>
+          <input type="text" id="titleInput" placeholder="Judul cerita" maxlength="120" required />
+        </label>
+
+        <label class="field">
+          <span class="field-label">Penulis</span>
+          <input type="text" id="authorInput" placeholder="Nama penulis" maxlength="60" required />
+        </label>
+
+        <div class="field">
+          <span class="field-label">Kategori</span>
+          <div class="category-grid" id="categoryGrid"></div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Isi Cerita</span>
+          <textarea id="contentInput" rows="9" maxlength="8000" placeholder="Tulis ceritamu di sini…" required></textarea>
+          <span class="field-hint"><span id="charCount">0</span> karakter</span>
+        </label>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===================== CONFIRM ALERT ===================== -->
+  <div class="alert-backdrop" id="alertBackdrop" hidden>
+    <div class="alert" role="alertdialog" aria-modal="true" aria-labelledby="alertTitle" aria-describedby="alertMessage">
+      <div class="alert-body">
+        <h3 class="alert-title" id="alertTitle">Hapus Cerita?</h3>
+        <p class="alert-message" id="alertMessage">Cerita ini akan dihapus permanen.</p>
+      </div>
+      <div class="alert-actions">
+        <button class="alert-button" id="alertCancel">Batal</button>
+        <button class="alert-button alert-button--danger" id="alertConfirm">Hapus</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
